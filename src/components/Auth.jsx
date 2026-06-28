@@ -5,6 +5,7 @@ export default function Auth() {
     const [loading, setLoading] = useState(false);
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
+    const [username, setUsername] = useState(''); // Новое состояние для никнейма
     const [isLogin, setIsLogin] = useState(true);
     const [message, setMessage] = useState('');
 
@@ -18,7 +19,16 @@ export default function Auth() {
                 const { error } = await supabase.auth.signInWithPassword({ email, password });
                 if (error) throw error;
             } else {
-                const { error } = await supabase.auth.signUp({ email, password });
+                // При регистрации сохраняем никнейм в метаданные
+                const { error } = await supabase.auth.signUp({
+                    email,
+                    password,
+                    options: {
+                        data: {
+                            username: username,
+                        }
+                    }
+                });
                 if (error) throw error;
                 setMessage('Successfully registered! You can now log in.');
             }
@@ -36,6 +46,19 @@ export default function Auth() {
             </h2>
 
             <form onSubmit={handleAuth} className="space-y-4">
+                {/* Показываем поле Username только при регистрации */}
+                {!isLogin && (
+                    <div>
+                        <input
+                            type="text"
+                            placeholder="Username"
+                            value={username}
+                            onChange={(e) => setUsername(e.target.value)}
+                            className="w-full bg-bgMain border border-acc2 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-acc1 transition-colors"
+                            required={!isLogin}
+                        />
+                    </div>
+                )}
                 <div>
                     <input
                         type="email"
