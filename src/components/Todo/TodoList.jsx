@@ -19,7 +19,8 @@ const PROJECT_COLORS = [
     '#00b4d8', // голубой
 ];
 
-export default function TodoList({ user }) {
+// ДОБАВЛЕН onTaskUpdated В ПРОПСЫ
+export default function TodoList({ user, onTaskUpdated }) {
     const [tasks, setTasks] = useState([]);
     const [projects, setProjects] = useState([]);
     const [activeTab, setActiveTab] = useState('active');
@@ -31,7 +32,7 @@ export default function TodoList({ user }) {
     const [selectedProjectId, setSelectedProjectId] = useState('');
 
     const [newProjectName, setNewProjectName] = useState('');
-    const [newProjectColor, setNewProjectColor] = useState(PROJECT_COLORS[0]); // Цвет по умолчанию
+    const [newProjectColor, setNewProjectColor] = useState(PROJECT_COLORS[0]);
     const [showProjectForm, setShowProjectForm] = useState(false);
 
     useEffect(() => {
@@ -83,6 +84,7 @@ export default function TodoList({ user }) {
             setNewProjectName('');
             setNewProjectColor(PROJECT_COLORS[0]);
             setShowProjectForm(false);
+            if (onTaskUpdated) onTaskUpdated('Project created!');
         }
         if (error) console.error('Error adding project:', error);
     };
@@ -98,7 +100,11 @@ export default function TodoList({ user }) {
         setSelectedProjectId('');
 
         const { error } = await supabase.from('projects').delete().eq('id', selectedProjectId);
-        if (error) fetchProjects();
+        if (error) {
+            fetchProjects();
+        } else {
+            if (onTaskUpdated) onTaskUpdated('Project deleted');
+        }
     };
 
     const addTask = async (e) => {
@@ -123,34 +129,82 @@ export default function TodoList({ user }) {
             setDescription('');
             setDueDate(new Date().toISOString().split('T')[0]);
             setPriority('low');
+            if (onTaskUpdated) onTaskUpdated('Task added!');
         }
         if (error) console.error('Error adding task:', error);
     };
 
+    // ОБНОВЛЕННЫЙ TOGGLE TASK (Списывает XP при отмене)
     const toggleTask = async (id, currentStatus) => {
-        const completedAt = !currentStatus ? new Date().toISOString() : null;
+        const task = tasks.find(t => t.id === id);
+        const xpPoints = { high: 20, medium: 15, low: 10 }[task.priority] || 10;
 
-        setTasks(tasks.map(t =>
-            t.id === id ? { ...t, completed: !currentStatus, completed_at: completedAt } : t
-        ));
+        if (currentStatus) {
+            // Снимаем галочку -> Возвращаем XP назад
+            const { data: userData } = await supabase.from('user_settings').select('xp').eq('user_id', user.id).single();
+            await supabase.from('user_settings').update({ xp: Math.max(0, (userData?.xp || 0) - xpPoints) }).eq('user_id', user.id);
 
-        const { error } = await supabase
-            .from('tasks')
-            .update({ completed: !currentStatus, completed_at: completedAt })
-            .eq('id', id);
+            setTasks(tasks.map(t => t.id === id ? { ...t, completed: false, completed_at: null } : t));
+            await supabase.from('tasks').update({ completed: false, completed_at: null }).eq('id', id);
 
-        if (error) console.error('Error updating task:', error);
+            if (onTaskUpdated) onTaskUpdated(`Task unmarked. -${xpPoints} XP`);
+            return;
+        }
+
+        // Выполняем задачу -> Начисляем XP
+        const completedAt = new Date().toISOString();
+        setTasks(tasks.map(t => t.id === id ? { ...t, completed: true, completed_at: completedAt } : t));
+
+        const { data: userData } = await supabase.from('user_settings').select('xp').eq('user_id', user.id).single();
+        await supabase.from('user_settings').update({ xp: (userData?.xp || 0) + xpPoints }).eq('user_id', user.id);
+
+        await supabase.from('tasks').update({ completed: true, completed_at: completedAt }).eq('id', id);
+        if (onTaskUpdated) onTaskUpdated(`Task completed! +${xpPoints} XP`);
     };
 
+    // ОБНОВЛЕННЫЙ DELETE TASK (Сначала удаляет из БД, потом списывает XP)
     const deleteTask = async (id) => {
+        const taskToDelete = tasks.find(t => t.id === id);
+
+        // 1. СНАЧАЛА удаляем из базы и просим вернуть удаленную строку
+        const { data, error } = await supabase
+            .from('tasks')
+            .delete()
+            .eq('id', id)
+            .select();
+
+        if (error || !data || data.length === 0) {
+            console.error('Error deleting task:', error);
+            if (onTaskUpdated) onTaskUpdated('Failed to delete task');
+            return;
+        }
+
+        // 2. ТОЛЬКО ТЕПЕРЬ удаляем из интерфейса
         setTasks(tasks.filter(t => t.id !== id));
-        const { error } = await supabase.from('tasks').delete().eq('id', id);
-        if (error) fetchTasks();
+
+        // 3. И ТОЛЬКО ТЕПЕРЬ списываем баллы, если задача была выполнена
+        if (taskToDelete && taskToDelete.completed) {
+            const xpPoints = { high: 20, medium: 15, low: 10 }[taskToDelete.priority] || 10;
+
+            const { data: userData } = await supabase
+                .from('user_settings')
+                .select('xp')
+                .eq('user_id', user.id)
+                .single();
+
+            await supabase
+                .from('user_settings')
+                .update({ xp: Math.max(0, (userData?.xp || 0) - xpPoints) })
+                .eq('user_id', user.id);
+
+            if (onTaskUpdated) onTaskUpdated(`Task deleted! -${xpPoints} XP`);
+        } else {
+            if (onTaskUpdated) onTaskUpdated('Task deleted');
+        }
     };
 
     const displayedTasks = tasks.filter(t => activeTab === 'active' ? !t.completed : t.completed);
 
-    // Helper для получения проекта (чтобы достать имя и цвет)
     const getProject = (projectId) => {
         if (!projectId) return null;
         return projects.find(p => p.id === projectId) || null;
