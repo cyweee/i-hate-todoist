@@ -56,31 +56,28 @@ export default function ActivityTracker({ user, refreshKey }) {
         }
     }, [user, refreshKey]);
 
-    // Обновляем локальное состояние при вводе
     const handleGoalChange = (e) => {
         setDailyGoal(e.target.value);
     };
 
-    // Сохраняем в базу только при нажатии Enter или потере фокуса (чтобы не спамить базу)
     const updateGoalInDB = async () => {
-        // Защита от пустых значений или отрицательных чисел
         let finalGoal = parseInt(dailyGoal);
         if (isNaN(finalGoal) || finalGoal < 1) {
             finalGoal = 1;
             setDailyGoal(1);
         }
 
+        // Используем upsert, чтобы гарантированно создать/обновить запись и избежать сброса
         const { error } = await supabase
             .from('user_settings')
-            .update({ daily_goal: finalGoal })
-            .eq('user_id', user.id);
+            .upsert({ user_id: user.id, daily_goal: finalGoal }, { onConflict: 'user_id' });
 
         if (error) console.error('Error updating goal:', error);
     };
 
     const handleKeyDown = (e) => {
         if (e.key === 'Enter') {
-            e.target.blur(); // Снимает фокус, что триггерит onBlur (updateGoalInDB)
+            e.target.blur();
         }
     };
 

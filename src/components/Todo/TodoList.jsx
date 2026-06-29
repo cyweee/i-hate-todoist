@@ -7,19 +7,17 @@ const PRIORITY_CONFIG = {
     low: { color: 'bg-[#546ca4]', border: 'border-[#546ca4]', text: 'text-[#546ca4]', label: 'Low' },
 };
 
-// Палитра цветов для проектов
 const PROJECT_COLORS = [
-    '#546ca4', // acc1 (синий)
-    '#52b788', // зеленый
-    '#d18b47', // оранжевый
-    '#a63d40', // красный
-    '#9d4edd', // фиолетовый
-    '#e07a5f', // терракотовый
-    '#f4a261', // песочный
-    '#00b4d8', // голубой
+    '#546ca4',
+    '#52b788',
+    '#d18b47',
+    '#a63d40',
+    '#9d4edd',
+    '#e07a5f',
+    '#f4a261',
+    '#00b4d8',
 ];
 
-// ДОБАВЛЕН onTaskUpdated В ПРОПСЫ
 export default function TodoList({ user, onTaskUpdated }) {
     const [tasks, setTasks] = useState([]);
     const [projects, setProjects] = useState([]);
@@ -134,13 +132,11 @@ export default function TodoList({ user, onTaskUpdated }) {
         if (error) console.error('Error adding task:', error);
     };
 
-    // ОБНОВЛЕННЫЙ TOGGLE TASK (Списывает XP при отмене)
     const toggleTask = async (id, currentStatus) => {
         const task = tasks.find(t => t.id === id);
         const xpPoints = { high: 20, medium: 15, low: 10 }[task.priority] || 10;
 
         if (currentStatus) {
-            // Снимаем галочку -> Возвращаем XP назад
             const { data: userData } = await supabase.from('user_settings').select('xp').eq('user_id', user.id).single();
             await supabase.from('user_settings').update({ xp: Math.max(0, (userData?.xp || 0) - xpPoints) }).eq('user_id', user.id);
 
@@ -151,7 +147,6 @@ export default function TodoList({ user, onTaskUpdated }) {
             return;
         }
 
-        // Выполняем задачу -> Начисляем XP
         const completedAt = new Date().toISOString();
         setTasks(tasks.map(t => t.id === id ? { ...t, completed: true, completed_at: completedAt } : t));
 
@@ -162,11 +157,9 @@ export default function TodoList({ user, onTaskUpdated }) {
         if (onTaskUpdated) onTaskUpdated(`Task completed! +${xpPoints} XP`);
     };
 
-    // ОБНОВЛЕННЫЙ DELETE TASK (Сначала удаляет из БД, потом списывает XP)
     const deleteTask = async (id) => {
         const taskToDelete = tasks.find(t => t.id === id);
 
-        // 1. СНАЧАЛА удаляем из базы и просим вернуть удаленную строку
         const { data, error } = await supabase
             .from('tasks')
             .delete()
@@ -179,10 +172,8 @@ export default function TodoList({ user, onTaskUpdated }) {
             return;
         }
 
-        // 2. ТОЛЬКО ТЕПЕРЬ удаляем из интерфейса
         setTasks(tasks.filter(t => t.id !== id));
 
-        // 3. И ТОЛЬКО ТЕПЕРЬ списываем баллы, если задача была выполнена
         if (taskToDelete && taskToDelete.completed) {
             const xpPoints = { high: 20, medium: 15, low: 10 }[taskToDelete.priority] || 10;
 
@@ -210,10 +201,56 @@ export default function TodoList({ user, onTaskUpdated }) {
         return projects.find(p => p.id === projectId) || null;
     };
 
+    // Обработчик горячих клавиш (Ctrl+B)
+    const handleDescriptionKeyDown = (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
+            e.preventDefault();
+            const textarea = e.target;
+            const start = textarea.selectionStart;
+            const end = textarea.selectionEnd;
+            const text = textarea.value;
+
+            const newText = text.substring(0, start) + '**' + text.substring(start, end) + '**' + text.substring(end);
+            setDescription(newText);
+
+            setTimeout(() => {
+                textarea.focus();
+                textarea.setSelectionRange(start + 2, end + 2);
+            }, 0);
+        }
+    };
+
+    // Форматирование Markdown-подобного текста
+    const formatDescription = (text) => {
+        if (!text) return null;
+
+        return text.split('\n').map((line, i) => {
+            const trimmed = line.trim();
+            const isListItem = trimmed.startsWith('- ');
+            let content = isListItem ? trimmed.substring(2) : line;
+
+            const parts = content.split(/(\*\*.*?\*\*)/g).map((part, j) => {
+                if (part.startsWith('**') && part.endsWith('**')) {
+                    return <strong key={j} className="font-bold text-gray-200">{part.slice(2, -2)}</strong>;
+                }
+                return part;
+            });
+
+            if (isListItem) {
+                return (
+                    <div key={i} className="flex items-start gap-2 mt-1">
+                        <span className="text-[10px] mt-1 text-acc1">●</span>
+                        <span>{parts}</span>
+                    </div>
+                );
+            }
+
+            return <div key={i} className="min-h-[1.25rem]">{parts}</div>;
+        });
+    };
+
     return (
         <div className="bg-bgSec p-6 rounded-xl border border-acc2 mb-6 text-left shadow-lg">
-
-            {/* Tabs Navigation */}
             <div className="flex space-x-4 mb-6 border-b border-acc2 pb-2">
                 <button
                     onClick={() => setActiveTab('active')}
@@ -229,10 +266,8 @@ export default function TodoList({ user, onTaskUpdated }) {
                 </button>
             </div>
 
-            {/* Task Form */}
             {activeTab === 'active' && (
                 <div className="mb-8 bg-bgMain p-4 rounded-lg border border-acc2">
-
                     <div className="flex justify-between items-center mb-4 pb-2 border-b border-acc2">
                         <div className="flex items-center gap-2">
                             <select
@@ -269,7 +304,6 @@ export default function TodoList({ user, onTaskUpdated }) {
                         </button>
                     </div>
 
-                    {/* Expanded Project Form with Colors */}
                     {showProjectForm && (
                         <form onSubmit={addProject} className="flex flex-col gap-3 mb-6 bg-bgSec p-3 rounded-lg border border-acc2">
                             <input
@@ -302,7 +336,6 @@ export default function TodoList({ user, onTaskUpdated }) {
                         </form>
                     )}
 
-                    {/* Main Task Form */}
                     <form onSubmit={addTask} className="flex flex-col gap-3">
                         <input
                             type="text"
@@ -315,7 +348,8 @@ export default function TodoList({ user, onTaskUpdated }) {
                         <textarea
                             value={description}
                             onChange={(e) => setDescription(e.target.value)}
-                            placeholder="Description (optional)"
+                            onKeyDown={handleDescriptionKeyDown}
+                            placeholder="Description (use '- ' for list, Ctrl+B for bold)"
                             rows="2"
                             className="w-full bg-transparent border-b border-acc2 px-2 py-2 text-gray-300 text-sm focus:outline-none focus:border-acc1 transition-colors resize-none"
                         />
@@ -358,7 +392,6 @@ export default function TodoList({ user, onTaskUpdated }) {
                 </div>
             )}
 
-            {/* Task List */}
             <ul className="space-y-3">
                 {displayedTasks.length === 0 ? (
                     <p className="text-gray-500 text-center py-8">
@@ -396,9 +429,9 @@ export default function TodoList({ user, onTaskUpdated }) {
 
                                     <div className="flex-1 flex flex-col">
                                         <div className="flex items-center gap-2 flex-wrap">
-                      <span className={`text-lg transition-all ${task.completed ? 'text-gray-400 line-through' : 'text-gray-200'}`}>
-                        {task.title}
-                      </span>
+                                            <span className={`text-lg transition-all ${task.completed ? 'text-gray-400 line-through' : 'text-gray-200'}`}>
+                                                {task.title}
+                                            </span>
                                             {!task.completed && (
                                                 <span className={`w-2 h-2 rounded-full ${PRIORITY_CONFIG[task.priority || 'low'].color}`}></span>
                                             )}
@@ -407,21 +440,21 @@ export default function TodoList({ user, onTaskUpdated }) {
                                                     style={{ backgroundColor: project.color }}
                                                     className="text-[10px] uppercase tracking-wider text-white px-2 py-0.5 rounded-sm ml-2 opacity-90"
                                                 >
-                          {project.name}
-                        </span>
+                                                    {project.name}
+                                                </span>
                                             )}
                                         </div>
 
                                         {task.description && (
-                                            <span className={`text-sm mt-1 ${task.completed ? 'text-gray-500' : 'text-gray-400'}`}>
-                        {task.description}
-                      </span>
+                                            <div className={`text-sm mt-2 ${task.completed ? 'text-gray-500' : 'text-gray-400'}`}>
+                                                {formatDescription(task.description)}
+                                            </div>
                                         )}
 
                                         {task.due_date && (
                                             <span className="text-xs font-mono text-acc1 mt-2 bg-bgSec border border-acc2 w-fit px-2 py-0.5 rounded">
-                        {task.due_date}
-                      </span>
+                                                {task.due_date}
+                                            </span>
                                         )}
                                     </div>
                                 </div>
