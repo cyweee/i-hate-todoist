@@ -141,7 +141,8 @@ export default function TodoList({ user, onTaskUpdated }) {
             await supabase.from('user_settings').update({ xp: Math.max(0, (userData?.xp || 0) - xpPoints) }).eq('user_id', user.id);
 
             setTasks(tasks.map(t => t.id === id ? { ...t, completed: false, completed_at: null } : t));
-            await supabase.from('tasks').update({ completed: false, completed_at: null }).eq('id', id);
+            // Заодно стираем "штамп" цели, если снимаем галочку
+            await supabase.from('tasks').update({ completed: false, completed_at: null, current_daily_goal: null }).eq('id', id);
 
             if (onTaskUpdated) onTaskUpdated(`Task unmarked. -${xpPoints} XP`);
             return;
@@ -150,10 +151,19 @@ export default function TodoList({ user, onTaskUpdated }) {
         const completedAt = new Date().toISOString();
         setTasks(tasks.map(t => t.id === id ? { ...t, completed: true, completed_at: completedAt } : t));
 
-        const { data: userData } = await supabase.from('user_settings').select('xp').eq('user_id', user.id).single();
+        // ДОСТАЕМ НЕ ТОЛЬКО XP, НО И DAILY_GOAL
+        const { data: userData } = await supabase.from('user_settings').select('xp, daily_goal').eq('user_id', user.id).single();
+        const currentGoal = userData?.daily_goal || 3;
+
         await supabase.from('user_settings').update({ xp: (userData?.xp || 0) + xpPoints }).eq('user_id', user.id);
 
-        await supabase.from('tasks').update({ completed: true, completed_at: completedAt }).eq('id', id);
+        // СОХРАНЯЕМ В ЗАДАЧУ current_daily_goal
+        await supabase.from('tasks').update({
+            completed: true,
+            completed_at: completedAt,
+            current_daily_goal: currentGoal // <--- Вот наш секретный штамп
+        }).eq('id', id);
+
         if (onTaskUpdated) onTaskUpdated(`Task completed! +${xpPoints} XP`);
     };
 

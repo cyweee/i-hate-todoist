@@ -5,6 +5,7 @@ import { generateYearGrid, getContributionColor } from '../../lib/utils';
 export default function ActivityTracker({ user, refreshKey }) {
     const [grid, setGrid] = useState(generateYearGrid());
     const [dailyGoal, setDailyGoal] = useState(3);
+    const [savedGoal, setSavedGoal] = useState(3);
     const [tooltip, setTooltip] = useState({ show: false, text: '', x: 0, y: 0 });
 
     useEffect(() => {
@@ -15,13 +16,10 @@ export default function ActivityTracker({ user, refreshKey }) {
                 .eq('user_id', user.id)
                 .single();
 
-            if (error && error.code !== 'PGRST116') {
-                console.error('Error fetching settings:', error);
-            }
-
             if (data) {
                 setDailyGoal(data.daily_goal);
-            } else {
+                setSavedGoal(data.daily_goal);
+            } else if (error && error.code === 'PGRST116') {
                 await supabase.from('user_settings').insert([{ user_id: user.id, daily_goal: 3 }]);
             }
         };
@@ -32,21 +30,26 @@ export default function ActivityTracker({ user, refreshKey }) {
                 .select('*')
                 .eq('user_id', user.id);
 
-            if (error) {
-                console.error('Error fetching stats:', error);
-                return;
-            }
+            if (error) return;
 
             if (data) {
+                // ДОБАВЛЕНО: Читаем и completed, и target_goal из нового SQL View
                 const statsMap = data.reduce((acc, stat) => {
-                    acc[stat.day_date] = stat.completed_count;
+                    acc[stat.day_date] = {
+                        completed: stat.completed_count,
+                        target_goal: stat.target_goal
+                    };
                     return acc;
                 }, {});
 
-                setGrid(generateYearGrid().map(day => ({
-                    ...day,
-                    completed: statsMap[day.date] || 0
-                })));
+                setGrid(generateYearGrid().map(day => {
+                    const stat = statsMap[day.date];
+                    return {
+                        ...day,
+                        completed: stat ? stat.completed : 0,
+                        target_goal: stat ? stat.target_goal : null // Записываем индивидуальную цель дня
+                    };
+                }));
             }
         };
 
@@ -56,23 +59,49 @@ export default function ActivityTracker({ user, refreshKey }) {
         }
     }, [user, refreshKey]);
 
+    // ДОБАВЛЕНО: Жесткая проверка ввода на лету
     const handleGoalChange = (e) => {
-        setDailyGoal(e.target.value);
-    };
+        let val = e.target.value;
 
-    const updateGoalInDB = async () => {
-        let finalGoal = parseInt(dailyGoal);
-        if (isNaN(finalGoal) || finalGoal < 1) {
-            finalGoal = 1;
-            setDailyGoal(1);
+        if (val === '') {
+            setDailyGoal('');
+            return;
         }
 
-        // Используем upsert, чтобы гарантированно создать/обновить запись и избежать сброса
+        let num = parseInt(val, 10);
+        if (num > 10) num = 10;
+        if (num < 1) num = 1;
+
+        setDailyGoal(num);
+    };
+
+    const attemptUpdateGoal = async () => {
+        if (dailyGoal === '' || parseInt(dailyGoal, 10) === savedGoal) {
+            setDailyGoal(savedGoal);
+            return;
+        }
+
+        let finalGoal = parseInt(dailyGoal, 10);
+
+        // Перевел на английский для консистентности UI
+        const confirmChange = window.confirm(`Are you sure you want to set your daily goal to ${finalGoal}?`);
+
+        if (!confirmChange) {
+            setDailyGoal(savedGoal);
+            return;
+        }
+
         const { error } = await supabase
             .from('user_settings')
             .upsert({ user_id: user.id, daily_goal: finalGoal }, { onConflict: 'user_id' });
 
-        if (error) console.error('Error updating goal:', error);
+        if (error) {
+            console.error('Error updating goal:', error);
+            alert('Error saving! Check Supabase RLS policies.');
+            setDailyGoal(savedGoal);
+        } else {
+            setSavedGoal(finalGoal);
+        }
     };
 
     const handleKeyDown = (e) => {
@@ -82,9 +111,12 @@ export default function ActivityTracker({ user, refreshKey }) {
     };
 
     const handleMouseEnter = (e, day) => {
+        // ДОБАВЛЕНО: Тултип показывает цель именно того дня (или текущую, если старой нет)
+        const dayGoal = day.target_goal || savedGoal;
+
         const text = day.completed === 0
             ? `0 tasks on ${day.date}`
-            : `${day.completed}/${dailyGoal} tasks on ${day.date}`;
+            : `${day.completed}/${dayGoal} tasks on ${day.date}`;
 
         setTooltip({ show: true, text, x: e.clientX, y: e.clientY - 30 });
     };
@@ -98,11 +130,12 @@ export default function ActivityTracker({ user, refreshKey }) {
                     <input
                         type="number"
                         min="1"
+                        max="10"
                         value={dailyGoal}
                         onChange={handleGoalChange}
-                        onBlur={updateGoalInDB}
+                        onBlur={attemptUpdateGoal}
                         onKeyDown={handleKeyDown}
-                        className="bg-bgMain text-white text-sm px-3 py-1 w-20 rounded border border-acc2 focus:outline-none focus:border-acc1 text-center"
+                        className="bg-bgMain text-white text-sm px-3 py-1 w-20 rounded border border-acc2 focus:outline-none focus:border-acc1 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                         title="Press Enter to save"
                     />
                 </div>
@@ -110,16 +143,21 @@ export default function ActivityTracker({ user, refreshKey }) {
 
             <div className="overflow-x-auto pb-4 custom-scrollbar">
                 <div className="grid grid-rows-7 grid-flow-col gap-1 w-max">
-                    {grid.map((day, idx) => (
-                        <div
-                            key={idx}
-                            onMouseEnter={(e) => day.date >= '2026-06-28' && handleMouseEnter(e, day)}
-                            onMouseLeave={() => setTooltip({ show: false })}
-                            className={`w-[14px] h-[14px] rounded-sm transition-all duration-200 ${
-                                day.date >= '2026-06-28' ? 'cursor-pointer hover:ring-2 hover:ring-white hover:scale-110' : ''
-                            } ${getContributionColor(day.completed, parseInt(dailyGoal) || 1, day.date)}`}
-                        />
-                    ))}
+                    {grid.map((day, idx) => {
+                        // ДОБАВЛЕНО: Цвет считается исходя из цели конкретного дня
+                        const dayGoal = day.target_goal || savedGoal;
+
+                        return (
+                            <div
+                                key={idx}
+                                onMouseEnter={(e) => day.date >= '2026-06-28' && handleMouseEnter(e, day)}
+                                onMouseLeave={() => setTooltip({ show: false })}
+                                className={`w-[14px] h-[14px] rounded-sm transition-all duration-200 ${
+                                    day.date >= '2026-06-28' ? 'cursor-pointer hover:ring-2 hover:ring-white hover:scale-110' : ''
+                                } ${getContributionColor(day.completed, dayGoal, day.date)}`}
+                            />
+                        );
+                    })}
                 </div>
             </div>
 
