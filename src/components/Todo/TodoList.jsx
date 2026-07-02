@@ -33,6 +33,10 @@ export default function TodoList({ user, onTaskUpdated }) {
     const [newProjectColor, setNewProjectColor] = useState(PROJECT_COLORS[0]);
     const [showProjectForm, setShowProjectForm] = useState(false);
 
+    // Стейты для редактирования описания
+    const [editingTaskId, setEditingTaskId] = useState(null);
+    const [editDescription, setEditDescription] = useState('');
+
     useEffect(() => {
         if (user) {
             fetchProjects();
@@ -141,7 +145,6 @@ export default function TodoList({ user, onTaskUpdated }) {
             await supabase.from('user_settings').update({ xp: Math.max(0, (userData?.xp || 0) - xpPoints) }).eq('user_id', user.id);
 
             setTasks(tasks.map(t => t.id === id ? { ...t, completed: false, completed_at: null } : t));
-            // Заодно стираем "штамп" цели, если снимаем галочку
             await supabase.from('tasks').update({ completed: false, completed_at: null, current_daily_goal: null }).eq('id', id);
 
             if (onTaskUpdated) onTaskUpdated(`Task unmarked. -${xpPoints} XP`);
@@ -151,17 +154,15 @@ export default function TodoList({ user, onTaskUpdated }) {
         const completedAt = new Date().toISOString();
         setTasks(tasks.map(t => t.id === id ? { ...t, completed: true, completed_at: completedAt } : t));
 
-        // ДОСТАЕМ НЕ ТОЛЬКО XP, НО И DAILY_GOAL
         const { data: userData } = await supabase.from('user_settings').select('xp, daily_goal').eq('user_id', user.id).single();
         const currentGoal = userData?.daily_goal || 3;
 
         await supabase.from('user_settings').update({ xp: (userData?.xp || 0) + xpPoints }).eq('user_id', user.id);
 
-        // СОХРАНЯЕМ В ЗАДАЧУ current_daily_goal
         await supabase.from('tasks').update({
             completed: true,
             completed_at: completedAt,
-            current_daily_goal: currentGoal // <--- Вот наш секретный штамп
+            current_daily_goal: currentGoal
         }).eq('id', id);
 
         if (onTaskUpdated) onTaskUpdated(`Task completed! +${xpPoints} XP`);
@@ -204,6 +205,37 @@ export default function TodoList({ user, onTaskUpdated }) {
         }
     };
 
+    // Функции для редактирования описания
+    const startEditing = (task) => {
+        setEditingTaskId(task.id);
+        setEditDescription(task.description || '');
+    };
+
+    const cancelEditing = () => {
+        setEditingTaskId(null);
+        setEditDescription('');
+    };
+
+    const saveEditedDescription = async (id) => {
+        const { error } = await supabase
+            .from('tasks')
+            .update({ description: editDescription })
+            .eq('id', id);
+
+        if (error) {
+            console.error('Error updating description:', error);
+            alert('Failed to save description!');
+            return;
+        }
+
+        setTasks(tasks.map(t =>
+            t.id === id ? { ...t, description: editDescription } : t
+        ));
+
+        setEditingTaskId(null);
+        if (onTaskUpdated) onTaskUpdated('Description updated!');
+    };
+
     const displayedTasks = tasks.filter(t => activeTab === 'active' ? !t.completed : t.completed);
 
     const getProject = (projectId) => {
@@ -211,7 +243,7 @@ export default function TodoList({ user, onTaskUpdated }) {
         return projects.find(p => p.id === projectId) || null;
     };
 
-    // Обработчик горячих клавиш (Ctrl+B)
+    // Обработчик горячих клавиш (Ctrl+B) для новой задачи
     const handleDescriptionKeyDown = (e) => {
         if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
             e.preventDefault();
@@ -219,10 +251,8 @@ export default function TodoList({ user, onTaskUpdated }) {
             const start = textarea.selectionStart;
             const end = textarea.selectionEnd;
             const text = textarea.value;
-
             const newText = text.substring(0, start) + '**' + text.substring(start, end) + '**' + text.substring(end);
             setDescription(newText);
-
             setTimeout(() => {
                 textarea.focus();
                 textarea.setSelectionRange(start + 2, end + 2);
@@ -230,7 +260,23 @@ export default function TodoList({ user, onTaskUpdated }) {
         }
     };
 
-    // Форматирование Markdown-подобного текста
+    // Обработчик горячих клавиш (Ctrl+B) для режима редактирования
+    const handleEditDescriptionKeyDown = (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
+            e.preventDefault();
+            const textarea = e.target;
+            const start = textarea.selectionStart;
+            const end = textarea.selectionEnd;
+            const text = textarea.value;
+            const newText = text.substring(0, start) + '**' + text.substring(start, end) + '**' + text.substring(end);
+            setEditDescription(newText);
+            setTimeout(() => {
+                textarea.focus();
+                textarea.setSelectionRange(start + 2, end + 2);
+            }, 0);
+        }
+    };
+
     const formatDescription = (text) => {
         if (!text) return null;
 
@@ -421,7 +467,7 @@ export default function TodoList({ user, onTaskUpdated }) {
                                         : 'bg-bgMain hover:opacity-90'
                                 } ${!project && !task.completed ? 'border-acc2 hover:border-acc1' : ''}`}
                             >
-                                <div className="flex items-start space-x-4 flex-1">
+                                <div className="flex items-start space-x-4 flex-1 w-full">
                                     <button
                                         onClick={() => toggleTask(task.id, task.completed)}
                                         className={`mt-1 min-w-[20px] w-5 h-5 rounded border-2 flex items-center justify-center cursor-pointer transition-colors ${
@@ -437,7 +483,7 @@ export default function TodoList({ user, onTaskUpdated }) {
                                         )}
                                     </button>
 
-                                    <div className="flex-1 flex flex-col">
+                                    <div className="flex-1 flex flex-col min-w-0 pr-6">
                                         <div className="flex items-center gap-2 flex-wrap">
                                             <span className={`text-lg transition-all ${task.completed ? 'text-gray-400 line-through' : 'text-gray-200'}`}>
                                                 {task.title}
@@ -455,14 +501,54 @@ export default function TodoList({ user, onTaskUpdated }) {
                                             )}
                                         </div>
 
-                                        {task.description && (
-                                            <div className={`text-sm mt-2 ${task.completed ? 'text-gray-500' : 'text-gray-400'}`}>
-                                                {formatDescription(task.description)}
+                                        {/* Блок Описания / Редактирования */}
+                                        {editingTaskId === task.id ? (
+                                            <div className="mt-2 w-full pr-4">
+                                                <textarea
+                                                    value={editDescription}
+                                                    onChange={(e) => setEditDescription(e.target.value)}
+                                                    onKeyDown={handleEditDescriptionKeyDown}
+                                                    className="w-full bg-bgSec text-gray-300 text-sm px-3 py-2 rounded border border-acc2 focus:outline-none focus:border-acc1 min-h-[60px]"
+                                                    autoFocus
+                                                />
+                                                <div className="flex gap-2 mt-2">
+                                                    <button
+                                                        onClick={() => saveEditedDescription(task.id)}
+                                                        className="text-xs bg-acc1 hover:bg-acc3 text-white px-3 py-1 rounded transition-colors"
+                                                    >
+                                                        Save
+                                                    </button>
+                                                    <button
+                                                        onClick={cancelEditing}
+                                                        className="text-xs bg-transparent hover:text-white text-gray-400 px-3 py-1 rounded border border-acc2 transition-colors"
+                                                    >
+                                                        Cancel
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <div className="mt-2 group/desc relative w-full">
+                                                {task.description && (
+                                                    <div className={`text-sm ${task.completed ? 'text-gray-500' : 'text-gray-400'}`}>
+                                                        {formatDescription(task.description)}
+                                                    </div>
+                                                )}
+
+                                                {!task.completed && (
+                                                    <button
+                                                        onClick={() => startEditing(task)}
+                                                        className={`absolute -top-1 right-0 text-[10px] text-acc1 hover:text-white transition-all bg-bgSec px-2 py-0.5 rounded border border-acc2 shadow-sm ${
+                                                            task.description ? 'opacity-0 group-hover/desc:opacity-100' : 'opacity-50 hover:opacity-100 relative top-0 mt-1 inline-block'
+                                                        }`}
+                                                    >
+                                                        {task.description ? 'Edit' : '+ description'}
+                                                    </button>
+                                                )}
                                             </div>
                                         )}
 
                                         {task.due_date && (
-                                            <span className="text-xs font-mono text-acc1 mt-2 bg-bgSec border border-acc2 w-fit px-2 py-0.5 rounded">
+                                            <span className="text-xs font-mono text-acc1 mt-3 bg-bgSec border border-acc2 w-fit px-2 py-0.5 rounded">
                                                 {task.due_date}
                                             </span>
                                         )}
@@ -471,7 +557,7 @@ export default function TodoList({ user, onTaskUpdated }) {
 
                                 <button
                                     onClick={() => deleteTask(task.id)}
-                                    className="text-gray-500 hover:text-[#a63d40] opacity-0 group-hover:opacity-100 transition-opacity p-2 rounded hover:bg-bgSec"
+                                    className="text-gray-500 hover:text-[#a63d40] opacity-0 group-hover:opacity-100 transition-opacity p-2 rounded hover:bg-bgSec absolute top-2 right-2"
                                     title="Delete task"
                                 >
                                     <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
