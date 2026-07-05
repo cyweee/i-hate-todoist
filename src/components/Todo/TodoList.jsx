@@ -113,6 +113,13 @@ export default function TodoList({ user, onTaskUpdated }) {
         e.preventDefault();
         if (!title.trim()) return;
 
+        // ДОБАВЛЕНО: Проверка на прошлые даты при добавлении
+        const todayStr = new Date().toISOString().split('T')[0];
+        if (dueDate < todayStr) {
+            alert("You cannot add tasks for past dates!");
+            return;
+        }
+
         const { data, error } = await supabase
             .from('tasks')
             .insert([{
@@ -412,9 +419,11 @@ export default function TodoList({ user, onTaskUpdated }) {
 
                         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mt-2">
                             <div className="flex flex-wrap items-center gap-4">
+                                {/* ДОБАВЛЕНО: атрибут min для ограничения прошлых дат */}
                                 <input
                                     type="date"
                                     value={dueDate}
+                                    min={new Date().toISOString().split('T')[0]}
                                     onChange={(e) => setDueDate(e.target.value)}
                                     className="bg-bgSec text-gray-300 text-sm px-3 py-2 rounded border border-acc2 focus:outline-none focus:border-acc1 cursor-pointer"
                                 />
@@ -456,6 +465,10 @@ export default function TodoList({ user, onTaskUpdated }) {
                 ) : (
                     displayedTasks.map((task) => {
                         const project = getProject(task.project_id);
+
+                        // ДОБАВЛЕНО: Определяем, просрочена ли задача
+                        const todayStr = new Date().toISOString().split('T')[0];
+                        const isOverdue = !task.completed && task.due_date && task.due_date < todayStr;
 
                         return (
                             <li
@@ -547,10 +560,23 @@ export default function TodoList({ user, onTaskUpdated }) {
                                             </div>
                                         )}
 
+                                        {/* ДОБАВЛЕНО: Стилизация просроченного дедлайна */}
                                         {task.due_date && (
-                                            <span className="text-xs font-mono text-acc1 mt-3 bg-bgSec border border-acc2 w-fit px-2 py-0.5 rounded">
-                                                {task.due_date}
-                                            </span>
+                                            <div className="flex items-center gap-2 mt-3">
+                                                <span className={`text-xs font-mono w-fit px-2 py-0.5 rounded border ${
+                                                    isOverdue
+                                                        ? 'text-[#a63d40] border-[#a63d40]/30 bg-[#a63d40]/10'
+                                                        : 'text-acc1 border-acc2 bg-bgSec'
+                                                }`}>
+                                                    {task.due_date}
+                                                </span>
+
+                                                {isOverdue && (
+                                                    <span className="text-[10px] font-bold text-[#a63d40] uppercase tracking-wider">
+                                                        Missed deadline
+                                                    </span>
+                                                )}
+                                            </div>
                                         )}
                                     </div>
                                 </div>
