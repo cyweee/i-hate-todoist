@@ -33,9 +33,11 @@ export default function TodoList({ user, onTaskUpdated }) {
     const [newProjectColor, setNewProjectColor] = useState(PROJECT_COLORS[0]);
     const [showProjectForm, setShowProjectForm] = useState(false);
 
-    // Стейты для редактирования описания
+    // Стейты для редактирования
     const [editingTaskId, setEditingTaskId] = useState(null);
     const [editDescription, setEditDescription] = useState('');
+    const [editPriority, setEditPriority] = useState('low');
+    const [editProjectId, setEditProjectId] = useState('');
 
     useEffect(() => {
         if (user) {
@@ -113,7 +115,6 @@ export default function TodoList({ user, onTaskUpdated }) {
         e.preventDefault();
         if (!title.trim()) return;
 
-        // ДОБАВЛЕНО: Проверка на прошлые даты при добавлении
         const todayStr = new Date().toISOString().split('T')[0];
         if (dueDate < todayStr) {
             alert("You cannot add tasks for past dates!");
@@ -212,35 +213,48 @@ export default function TodoList({ user, onTaskUpdated }) {
         }
     };
 
-    // Функции для редактирования описания
+    // Функции для редактирования
     const startEditing = (task) => {
         setEditingTaskId(task.id);
         setEditDescription(task.description || '');
+        setEditPriority(task.priority || 'low');
+        setEditProjectId(task.project_id || '');
     };
 
     const cancelEditing = () => {
         setEditingTaskId(null);
         setEditDescription('');
+        setEditPriority('low');
+        setEditProjectId('');
     };
 
-    const saveEditedDescription = async (id) => {
+    const saveEditedTask = async (id) => {
         const { error } = await supabase
             .from('tasks')
-            .update({ description: editDescription })
+            .update({
+                description: editDescription,
+                priority: editPriority,
+                project_id: editProjectId || null
+            })
             .eq('id', id);
 
         if (error) {
-            console.error('Error updating description:', error);
-            alert('Failed to save description!');
+            console.error('Error updating task:', error);
+            alert('Failed to save changes!');
             return;
         }
 
         setTasks(tasks.map(t =>
-            t.id === id ? { ...t, description: editDescription } : t
+            t.id === id ? {
+                ...t,
+                description: editDescription,
+                priority: editPriority,
+                project_id: editProjectId || null
+            } : t
         ));
 
         setEditingTaskId(null);
-        if (onTaskUpdated) onTaskUpdated('Description updated!');
+        if (onTaskUpdated) onTaskUpdated('Task updated!');
     };
 
     const displayedTasks = tasks.filter(t => activeTab === 'active' ? !t.completed : t.completed);
@@ -250,7 +264,6 @@ export default function TodoList({ user, onTaskUpdated }) {
         return projects.find(p => p.id === projectId) || null;
     };
 
-    // Обработчик горячих клавиш (Ctrl+B) для новой задачи
     const handleDescriptionKeyDown = (e) => {
         if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
             e.preventDefault();
@@ -267,7 +280,6 @@ export default function TodoList({ user, onTaskUpdated }) {
         }
     };
 
-    // Обработчик горячих клавиш (Ctrl+B) для режима редактирования
     const handleEditDescriptionKeyDown = (e) => {
         if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
             e.preventDefault();
@@ -419,7 +431,6 @@ export default function TodoList({ user, onTaskUpdated }) {
 
                         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mt-2">
                             <div className="flex flex-wrap items-center gap-4">
-                                {/* ДОБАВЛЕНО: атрибут min для ограничения прошлых дат */}
                                 <input
                                     type="date"
                                     value={dueDate}
@@ -466,7 +477,6 @@ export default function TodoList({ user, onTaskUpdated }) {
                     displayedTasks.map((task) => {
                         const project = getProject(task.project_id);
 
-                        // ДОБАВЛЕНО: Определяем, просрочена ли задача
                         const todayStr = new Date().toISOString().split('T')[0];
                         const isOverdue = !task.completed && task.due_date && task.due_date < todayStr;
 
@@ -514,7 +524,7 @@ export default function TodoList({ user, onTaskUpdated }) {
                                             )}
                                         </div>
 
-                                        {/* Блок Описания / Редактирования */}
+                                        {/* Блок Редактирования */}
                                         {editingTaskId === task.id ? (
                                             <div className="mt-2 w-full pr-4">
                                                 <textarea
@@ -522,11 +532,44 @@ export default function TodoList({ user, onTaskUpdated }) {
                                                     onChange={(e) => setEditDescription(e.target.value)}
                                                     onKeyDown={handleEditDescriptionKeyDown}
                                                     className="w-full bg-bgSec text-gray-300 text-sm px-3 py-2 rounded border border-acc2 focus:outline-none focus:border-acc1 min-h-[60px]"
+                                                    placeholder="Description..."
                                                     autoFocus
                                                 />
-                                                <div className="flex gap-2 mt-2">
+
+                                                {/* Новые контролы: Проект и Приоритет */}
+                                                <div className="flex flex-wrap items-center gap-4 mt-2 mb-3">
+                                                    <select
+                                                        value={editProjectId}
+                                                        onChange={(e) => setEditProjectId(e.target.value)}
+                                                        className="bg-bgMain text-gray-300 text-xs px-2 py-1.5 rounded border border-acc2 focus:outline-none focus:border-acc1 cursor-pointer"
+                                                    >
+                                                        <option value="">No Project</option>
+                                                        {projects.map(p => (
+                                                            <option key={p.id} value={p.id}>{p.name}</option>
+                                                        ))}
+                                                    </select>
+
+                                                    <div className="flex gap-2">
+                                                        {Object.entries(PRIORITY_CONFIG).map(([key, config]) => (
+                                                            <button
+                                                                key={key}
+                                                                type="button"
+                                                                onClick={() => setEditPriority(key)}
+                                                                className={`text-[10px] px-2 py-1 rounded-full border transition-all ${
+                                                                    editPriority === key
+                                                                        ? `${config.color} border-transparent text-white`
+                                                                        : `bg-transparent ${config.border} ${config.text} opacity-50 hover:opacity-100`
+                                                                }`}
+                                                            >
+                                                                {config.label}
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                </div>
+
+                                                <div className="flex gap-2">
                                                     <button
-                                                        onClick={() => saveEditedDescription(task.id)}
+                                                        onClick={() => saveEditedTask(task.id)}
                                                         className="text-xs bg-acc1 hover:bg-acc3 text-white px-3 py-1 rounded transition-colors"
                                                     >
                                                         Save
@@ -554,13 +597,12 @@ export default function TodoList({ user, onTaskUpdated }) {
                                                             task.description ? 'opacity-0 group-hover/desc:opacity-100' : 'opacity-50 hover:opacity-100 relative top-0 mt-1 inline-block'
                                                         }`}
                                                     >
-                                                        {task.description ? 'Edit' : '+ description'}
+                                                        Edit
                                                     </button>
                                                 )}
                                             </div>
                                         )}
 
-                                        {/* ДОБАВЛЕНО: Стилизация просроченного дедлайна */}
                                         {task.due_date && (
                                             <div className="flex items-center gap-2 mt-3">
                                                 <span className={`text-xs font-mono w-fit px-2 py-0.5 rounded border ${
