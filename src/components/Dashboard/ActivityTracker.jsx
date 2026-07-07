@@ -7,34 +7,34 @@ export default function ActivityTracker({ user, refreshKey }) {
     const [dailyGoal, setDailyGoal] = useState(3);
     const [savedGoal, setSavedGoal] = useState(3);
     const [tooltip, setTooltip] = useState({ show: false, text: '', x: 0, y: 0 });
-    const [overdueCount, setOverdueCount] = useState(0); // Новый стейт для просроченных задач
+    const [overdueCount, setOverdueCount] = useState(0);
 
     useEffect(() => {
-        const fetchSettings = async () => {
-            const { data, error } = await supabase
-                .from('user_settings')
-                .select('daily_goal')
-                .eq('user_id', user.id)
-                .single();
+        // PERFORMANCE FIX: Объединяем все запросы в один Promise.all для параллельного выполнения
+        const loadAllData = async () => {
+            if (!user) return;
 
-            if (data) {
-                setDailyGoal(data.daily_goal);
-                setSavedGoal(data.daily_goal);
-            } else if (error && error.code === 'PGRST116') {
+            const todayStr = new Date().toISOString().split('T')[0];
+
+            // Запускаем все три запроса одновременно
+            const [settingsRes, statsRes, overdueRes] = await Promise.all([
+                supabase.from('user_settings').select('daily_goal').eq('user_id', user.id).single(),
+                supabase.from('daily_stats').select('*').eq('user_id', user.id),
+                supabase.from('tasks').select('id', { count: 'exact', head: true })
+                    .eq('user_id', user.id).eq('completed', false).lt('due_date', todayStr)
+            ]);
+
+            // Обработка Settings
+            if (settingsRes.data) {
+                setDailyGoal(settingsRes.data.daily_goal);
+                setSavedGoal(settingsRes.data.daily_goal);
+            } else if (settingsRes.error && settingsRes.error.code === 'PGRST116') {
                 await supabase.from('user_settings').insert([{ user_id: user.id, daily_goal: 3 }]);
             }
-        };
 
-        const fetchStats = async () => {
-            const { data, error } = await supabase
-                .from('daily_stats')
-                .select('*')
-                .eq('user_id', user.id);
-
-            if (error) return;
-
-            if (data) {
-                const statsMap = data.reduce((acc, stat) => {
+            // Обработка Stats
+            if (statsRes.data) {
+                const statsMap = statsRes.data.reduce((acc, stat) => {
                     acc[stat.day_date] = {
                         completed: stat.completed_count,
                         target_goal: stat.target_goal
@@ -51,28 +51,14 @@ export default function ActivityTracker({ user, refreshKey }) {
                     };
                 }));
             }
-        };
 
-        // ДОБАВЛЕНО: Запрос для подсчета пропущенных дедлайнов
-        const fetchOverdue = async () => {
-            const todayStr = new Date().toISOString().split('T')[0];
-            const { count, error } = await supabase
-                .from('tasks')
-                .select('id', { count: 'exact', head: true }) // head: true означает, что мы просим только число, без самих данных (экономит трафик)
-                .eq('user_id', user.id)
-                .eq('completed', false)
-                .lt('due_date', todayStr);
-
-            if (!error && count !== null) {
-                setOverdueCount(count);
+            // Обработка Overdue
+            if (!overdueRes.error && overdueRes.count !== null) {
+                setOverdueCount(overdueRes.count);
             }
         };
 
-        if (user) {
-            fetchSettings();
-            fetchStats();
-            fetchOverdue(); // Вызываем проверку долгов
-        }
+        loadAllData();
     }, [user, refreshKey]);
 
     const handleGoalChange = (e) => {
@@ -91,12 +77,14 @@ export default function ActivityTracker({ user, refreshKey }) {
     };
 
     const attemptUpdateGoal = async () => {
-        if (dailyGoal === '' || parseInt(dailyGoal, 10) === savedGoal) {
+        // FIX BUG 8: Защита от пустого инпута (fallback на число)
+        if (dailyGoal === '' || isNaN(dailyGoal)) {
             setDailyGoal(savedGoal);
             return;
         }
 
         let finalGoal = parseInt(dailyGoal, 10);
+        if (finalGoal === savedGoal) return;
 
         const confirmChange = window.confirm(`Are you sure you want to set your daily goal to ${finalGoal}?`);
 
@@ -127,9 +115,13 @@ export default function ActivityTracker({ user, refreshKey }) {
     const handleMouseEnter = (e, day) => {
         const dayGoal = day.target_goal || savedGoal;
 
+        // FIX BUG 9: Санитаризация даты (защита от сломанного рендера)
+        const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+        const safeDate = dateRegex.test(day.date) ? day.date : 'Invalid date';
+
         const text = day.completed === 0
-            ? `0 tasks on ${day.date}`
-            : `${day.completed}/${dayGoal} tasks on ${day.date}`;
+            ? `0 tasks on ${safeDate}`
+            : `${day.completed}/${dayGoal} tasks on ${safeDate}`;
 
         setTooltip({ show: true, text, x: e.clientX, y: e.clientY - 30 });
     };
@@ -140,7 +132,6 @@ export default function ActivityTracker({ user, refreshKey }) {
                 <div className="flex items-center gap-4">
                     <h2 className="text-xl font-semibold text-gray-200">2026 Activity</h2>
 
-                    {/* ДОБАВЛЕНО: Индикатор пропущенных дедлайнов */}
                     {overdueCount > 0 && (
                         <div className="bg-[#a63d40]/10 border border-[#a63d40]/30 text-[#a63d40] text-xs px-2 py-1 rounded flex items-center gap-1 font-medium shadow-sm">
                             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

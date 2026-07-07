@@ -13,6 +13,9 @@ function App() {
     const [toast, setToast] = useState('');
     const [userData, setUserData] = useState({ xp: 0 });
 
+    // ДОБАВЛЕНО: Стейт для первой загрузки статистики (чтобы не было моргания с 0 на реальный XP)
+    const [isInitialStatsLoad, setIsInitialStatsLoad] = useState(true);
+
     useEffect(() => {
         supabase.auth.getSession().then(({ data: { session } }) => {
             setSession(session);
@@ -34,6 +37,7 @@ function App() {
     const fetchUserStats = async () => {
         const { data } = await supabase.from('user_settings').select('xp').eq('user_id', session.user.id).single();
         if (data) setUserData({ xp: data.xp });
+        setIsInitialStatsLoad(false); // Отключаем лоадер после первого получения данных
     };
 
     const handleTaskStatusChange = (msg) => {
@@ -63,10 +67,27 @@ function App() {
                     <header className="flex justify-between items-center mb-8 bg-bgSec p-4 rounded-xl border border-acc2 shadow-md">
                         <div className="flex gap-6 items-center">
                             <h1 className="text-2xl font-bold text-acc1">Tracker</h1>
+
+                            {/* Обертка для LVL и XP с лоадерами */}
                             <div className="flex gap-4 ml-4">
-                                <div className="text-center"><p className="text-[10px] text-gray-500">LVL</p><p className="font-bold text-acc1">{level}</p></div>
-                                <div className="text-center"><p className="text-[10px] text-gray-500">XP</p><p className="font-bold text-acc3">{userData.xp}</p></div>
+                                <div className="text-center flex flex-col items-center">
+                                    <p className="text-[10px] text-gray-500">LVL</p>
+                                    {isInitialStatsLoad ? (
+                                        <div className="h-5 w-6 bg-acc2/50 animate-pulse rounded mt-0.5"></div>
+                                    ) : (
+                                        <p className="font-bold text-acc1">{level}</p>
+                                    )}
+                                </div>
+                                <div className="text-center flex flex-col items-center">
+                                    <p className="text-[10px] text-gray-500">XP</p>
+                                    {isInitialStatsLoad ? (
+                                        <div className="h-5 w-8 bg-acc2/50 animate-pulse rounded mt-0.5"></div>
+                                    ) : (
+                                        <p className="font-bold text-acc3">{userData.xp}</p>
+                                    )}
+                                </div>
                             </div>
+
                         </div>
                         <div className="flex items-center gap-6">
                             <span className="text-gray-300 font-medium">{displayName}</span>
