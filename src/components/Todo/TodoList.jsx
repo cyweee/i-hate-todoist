@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../../lib/supabase';
 
 const PRIORITY_CONFIG = {
@@ -40,12 +40,27 @@ export default function TodoList({ user, onTaskUpdated }) {
     const [editProjectId, setEditProjectId] = useState('');
     const [editDueDate, setEditDueDate] = useState('');
 
+    // Стейт для блокировки двойных кликов (Race Condition Fix)
+    const [processingTasks, setProcessingTasks] = useState(new Set());
+
+    // Хук для фикса потери фокуса
+    const editTextAreaRef = useRef(null);
+
     useEffect(() => {
         if (user) {
             fetchProjects();
             fetchTasks();
         }
     }, [user]);
+
+    // Фокус и установка курсора в конец при редактировании
+    useEffect(() => {
+        if (editingTaskId && editTextAreaRef.current) {
+            const length = editTextAreaRef.current.value.length;
+            editTextAreaRef.current.focus();
+            editTextAreaRef.current.setSelectionRange(length, length);
+        }
+    }, [editingTaskId]);
 
     const fetchProjects = async () => {
         const { data, error } = await supabase
@@ -100,13 +115,23 @@ export default function TodoList({ user, onTaskUpdated }) {
         const confirmDelete = window.confirm("Are you sure you want to delete this project? Your tasks will be moved to Inbox.");
         if (!confirmDelete) return;
 
+        // Бэкап для Rollback
+        const previousProjects = [...projects];
+        const previousTasks = [...tasks];
+        const previousSelectedId = selectedProjectId;
+
+        // Оптимистичный UI
         setProjects(projects.filter(p => p.id !== selectedProjectId));
         setTasks(tasks.map(t => t.project_id === selectedProjectId ? { ...t, project_id: null } : t));
         setSelectedProjectId('');
 
-        const { error } = await supabase.from('projects').delete().eq('id', selectedProjectId);
+        const { error } = await supabase.from('projects').delete().eq('id', previousSelectedId);
         if (error) {
-            fetchProjects();
+            // Откат при ошибке
+            setProjects(previousProjects);
+            setTasks(previousTasks);
+            setSelectedProjectId(previousSelectedId);
+            alert("Network error: Failed to delete project. Rolled back.");
         } else {
             if (onTaskUpdated) onTaskUpdated('Project deleted');
         }
@@ -146,69 +171,89 @@ export default function TodoList({ user, onTaskUpdated }) {
     };
 
     const toggleTask = async (id, currentStatus) => {
+        // Блокировка от спама (Race Condition Fix)
+        if (processingTasks.has(id)) return;
+        setProcessingTasks(prev => new Set(prev).add(id));
+
         const task = tasks.find(t => t.id === id);
         const xpPoints = { high: 20, medium: 15, low: 10 }[task.priority] || 10;
 
-        if (currentStatus) {
-            const { data: userData } = await supabase.from('user_settings').select('xp').eq('user_id', user.id).single();
-            await supabase.from('user_settings').update({ xp: Math.max(0, (userData?.xp || 0) - xpPoints) }).eq('user_id', user.id);
+        // Бэкап для Rollback
+        const previousTasks = [...tasks];
+        const completedAt = currentStatus ? null : new Date().toISOString();
 
-            setTasks(tasks.map(t => t.id === id ? { ...t, completed: false, completed_at: null } : t));
-            await supabase.from('tasks').update({ completed: false, completed_at: null, current_daily_goal: null }).eq('id', id);
+        // Оптимистичный UI
+        setTasks(tasks.map(t => t.id === id ? { ...t, completed: !currentStatus, completed_at: completedAt } : t));
 
-            if (onTaskUpdated) onTaskUpdated(`Task unmarked. -${xpPoints} XP`);
-            return;
+        try {
+            if (currentStatus) {
+                // Снимаем галочку
+                const { error: taskError } = await supabase.from('tasks').update({ completed: false, completed_at: null, current_daily_goal: null }).eq('id', id);
+                if (taskError) throw taskError;
+
+                const { data: userData } = await supabase.from('user_settings').select('xp').eq('user_id', user.id).single();
+                if (userData) {
+                    await supabase.from('user_settings').update({ xp: Math.max(0, userData.xp - xpPoints) }).eq('user_id', user.id);
+                }
+                if (onTaskUpdated) onTaskUpdated(`Task unmarked. -${xpPoints} XP`);
+            } else {
+                // Ставим галочку
+                const { data: userData } = await supabase.from('user_settings').select('xp, daily_goal').eq('user_id', user.id).single();
+                const currentGoal = userData?.daily_goal || 3;
+
+                const { error: taskError } = await supabase.from('tasks').update({
+                    completed: true,
+                    completed_at: completedAt,
+                    current_daily_goal: currentGoal
+                }).eq('id', id);
+                if (taskError) throw taskError;
+
+                if (userData) {
+                    await supabase.from('user_settings').update({ xp: userData.xp + xpPoints }).eq('user_id', user.id);
+                }
+                if (onTaskUpdated) onTaskUpdated(`Task completed! +${xpPoints} XP`);
+            }
+        } catch (error) {
+            console.error("Error toggling task:", error);
+            // Откат при ошибке
+            setTasks(previousTasks);
+            alert("Network error: Failed to update task state.");
+        } finally {
+            // Снимаем блокировку
+            setProcessingTasks(prev => {
+                const newSet = new Set(prev);
+                newSet.delete(id);
+                return newSet;
+            });
         }
-
-        const completedAt = new Date().toISOString();
-        setTasks(tasks.map(t => t.id === id ? { ...t, completed: true, completed_at: completedAt } : t));
-
-        const { data: userData } = await supabase.from('user_settings').select('xp, daily_goal').eq('user_id', user.id).single();
-        const currentGoal = userData?.daily_goal || 3;
-
-        await supabase.from('user_settings').update({ xp: (userData?.xp || 0) + xpPoints }).eq('user_id', user.id);
-
-        await supabase.from('tasks').update({
-            completed: true,
-            completed_at: completedAt,
-            current_daily_goal: currentGoal
-        }).eq('id', id);
-
-        if (onTaskUpdated) onTaskUpdated(`Task completed! +${xpPoints} XP`);
     };
 
     const deleteTask = async (id) => {
         const taskToDelete = tasks.find(t => t.id === id);
+        const previousTasks = [...tasks];
 
-        const { data, error } = await supabase
-            .from('tasks')
-            .delete()
-            .eq('id', id)
-            .select();
+        // Оптимистичный UI
+        setTasks(tasks.filter(t => t.id !== id));
 
-        if (error || !data || data.length === 0) {
-            console.error('Error deleting task:', error);
-            if (onTaskUpdated) onTaskUpdated('Failed to delete task');
+        const { error } = await supabase.from('tasks').delete().eq('id', id);
+
+        if (error) {
+            setTasks(previousTasks); // Откат
+            alert('Failed to delete task. Network error.');
             return;
         }
 
-        setTasks(tasks.filter(t => t.id !== id));
-
         if (taskToDelete && taskToDelete.completed) {
             const xpPoints = { high: 20, medium: 15, low: 10 }[taskToDelete.priority] || 10;
-
-            const { data: userData } = await supabase
-                .from('user_settings')
-                .select('xp')
-                .eq('user_id', user.id)
-                .single();
-
-            await supabase
-                .from('user_settings')
-                .update({ xp: Math.max(0, (userData?.xp || 0) - xpPoints) })
-                .eq('user_id', user.id);
-
-            if (onTaskUpdated) onTaskUpdated(`Task deleted! -${xpPoints} XP`);
+            try {
+                const { data: userData } = await supabase.from('user_settings').select('xp').eq('user_id', user.id).single();
+                if (userData) {
+                    await supabase.from('user_settings').update({ xp: Math.max(0, userData.xp - xpPoints) }).eq('user_id', user.id);
+                }
+                if (onTaskUpdated) onTaskUpdated(`Task deleted! -${xpPoints} XP`);
+            } catch (err) {
+                console.error("XP update failed", err);
+            }
         } else {
             if (onTaskUpdated) onTaskUpdated('Task deleted');
         }
@@ -258,7 +303,6 @@ export default function TodoList({ user, onTaskUpdated }) {
             } : t
         );
 
-        // Сортируем задачи снова, если дата изменилась
         setTasks(updatedTasks.sort((a, b) => new Date(a.due_date) - new Date(b.due_date)));
         setEditingTaskId(null);
         if (onTaskUpdated) onTaskUpdated('Task updated!');
@@ -394,7 +438,6 @@ export default function TodoList({ user, onTaskUpdated }) {
                                 onChange={(e) => setNewProjectName(e.target.value)}
                                 placeholder="Project Name..."
                                 className="w-full bg-bgMain border border-acc2 px-3 py-2 text-sm rounded text-white focus:outline-none focus:border-acc1"
-                                autoFocus
                             />
                             <div className="flex justify-between items-center">
                                 <div className="flex gap-2">
@@ -500,7 +543,10 @@ export default function TodoList({ user, onTaskUpdated }) {
                                 <div className="flex items-start space-x-4 flex-1 w-full">
                                     <button
                                         onClick={() => toggleTask(task.id, task.completed)}
-                                        className={`mt-1 min-w-[20px] w-5 h-5 rounded border-2 flex items-center justify-center cursor-pointer transition-colors ${
+                                        disabled={processingTasks.has(task.id)}
+                                        className={`mt-1 min-w-[20px] w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
+                                            processingTasks.has(task.id) ? 'opacity-40 cursor-wait' : 'cursor-pointer'
+                                        } ${
                                             task.completed
                                                 ? 'bg-[#52b788] border-[#52b788]'
                                                 : 'border-acc1 hover:bg-acc2'
@@ -531,19 +577,17 @@ export default function TodoList({ user, onTaskUpdated }) {
                                             )}
                                         </div>
 
-                                        {/* Блок Редактирования */}
                                         {editingTaskId === task.id ? (
                                             <div className="mt-2 w-full pr-4">
                                                 <textarea
+                                                    ref={editTextAreaRef}
                                                     value={editDescription}
                                                     onChange={(e) => setEditDescription(e.target.value)}
                                                     onKeyDown={handleEditDescriptionKeyDown}
                                                     className="w-full bg-bgSec text-gray-300 text-sm px-3 py-2 rounded border border-acc2 focus:outline-none focus:border-acc1 min-h-[60px]"
                                                     placeholder="Description..."
-                                                    autoFocus
                                                 />
 
-                                                {/* Новые контролы: Дата, Проект и Приоритет */}
                                                 <div className="flex flex-wrap items-center gap-4 mt-2 mb-3">
                                                     <input
                                                         type="date"

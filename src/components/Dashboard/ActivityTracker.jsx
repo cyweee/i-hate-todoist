@@ -7,6 +7,7 @@ export default function ActivityTracker({ user, refreshKey }) {
     const [dailyGoal, setDailyGoal] = useState(3);
     const [savedGoal, setSavedGoal] = useState(3);
     const [tooltip, setTooltip] = useState({ show: false, text: '', x: 0, y: 0 });
+    const [overdueCount, setOverdueCount] = useState(0); // Новый стейт для просроченных задач
 
     useEffect(() => {
         const fetchSettings = async () => {
@@ -33,7 +34,6 @@ export default function ActivityTracker({ user, refreshKey }) {
             if (error) return;
 
             if (data) {
-                // ДОБАВЛЕНО: Читаем и completed, и target_goal из нового SQL View
                 const statsMap = data.reduce((acc, stat) => {
                     acc[stat.day_date] = {
                         completed: stat.completed_count,
@@ -47,19 +47,34 @@ export default function ActivityTracker({ user, refreshKey }) {
                     return {
                         ...day,
                         completed: stat ? stat.completed : 0,
-                        target_goal: stat ? stat.target_goal : null // Записываем индивидуальную цель дня
+                        target_goal: stat ? stat.target_goal : null
                     };
                 }));
+            }
+        };
+
+        // ДОБАВЛЕНО: Запрос для подсчета пропущенных дедлайнов
+        const fetchOverdue = async () => {
+            const todayStr = new Date().toISOString().split('T')[0];
+            const { count, error } = await supabase
+                .from('tasks')
+                .select('id', { count: 'exact', head: true }) // head: true означает, что мы просим только число, без самих данных (экономит трафик)
+                .eq('user_id', user.id)
+                .eq('completed', false)
+                .lt('due_date', todayStr);
+
+            if (!error && count !== null) {
+                setOverdueCount(count);
             }
         };
 
         if (user) {
             fetchSettings();
             fetchStats();
+            fetchOverdue(); // Вызываем проверку долгов
         }
     }, [user, refreshKey]);
 
-    // ДОБАВЛЕНО: Жесткая проверка ввода на лету
     const handleGoalChange = (e) => {
         let val = e.target.value;
 
@@ -83,7 +98,6 @@ export default function ActivityTracker({ user, refreshKey }) {
 
         let finalGoal = parseInt(dailyGoal, 10);
 
-        // Перевел на английский для консистентности UI
         const confirmChange = window.confirm(`Are you sure you want to set your daily goal to ${finalGoal}?`);
 
         if (!confirmChange) {
@@ -111,7 +125,6 @@ export default function ActivityTracker({ user, refreshKey }) {
     };
 
     const handleMouseEnter = (e, day) => {
-        // ДОБАВЛЕНО: Тултип показывает цель именно того дня (или текущую, если старой нет)
         const dayGoal = day.target_goal || savedGoal;
 
         const text = day.completed === 0
@@ -123,8 +136,21 @@ export default function ActivityTracker({ user, refreshKey }) {
 
     return (
         <div className="bg-bgSec p-6 rounded-xl shadow-lg border border-acc2 mb-6">
-            <div className="flex justify-between items-center mb-6">
-                <h2 className="text-xl font-semibold text-gray-200">2026 Activity</h2>
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-6 gap-4">
+                <div className="flex items-center gap-4">
+                    <h2 className="text-xl font-semibold text-gray-200">2026 Activity</h2>
+
+                    {/* ДОБАВЛЕНО: Индикатор пропущенных дедлайнов */}
+                    {overdueCount > 0 && (
+                        <div className="bg-[#a63d40]/10 border border-[#a63d40]/30 text-[#a63d40] text-xs px-2 py-1 rounded flex items-center gap-1 font-medium shadow-sm">
+                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                            </svg>
+                            {overdueCount} missed {overdueCount === 1 ? 'deadline' : 'deadlines'}
+                        </div>
+                    )}
+                </div>
+
                 <div className="flex items-center gap-2">
                     <span className="text-sm text-gray-400">Daily Goal:</span>
                     <input
@@ -144,7 +170,6 @@ export default function ActivityTracker({ user, refreshKey }) {
             <div className="overflow-x-auto pb-4 custom-scrollbar">
                 <div className="grid grid-rows-7 grid-flow-col gap-1 w-max">
                     {grid.map((day, idx) => {
-                        // ДОБАВЛЕНО: Цвет считается исходя из цели конкретного дня
                         const dayGoal = day.target_goal || savedGoal;
 
                         return (
