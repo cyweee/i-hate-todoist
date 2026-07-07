@@ -38,6 +38,7 @@ export default function TodoList({ user, onTaskUpdated }) {
     const [editDescription, setEditDescription] = useState('');
     const [editPriority, setEditPriority] = useState('low');
     const [editProjectId, setEditProjectId] = useState('');
+    const [editDueDate, setEditDueDate] = useState('');
 
     useEffect(() => {
         if (user) {
@@ -219,6 +220,7 @@ export default function TodoList({ user, onTaskUpdated }) {
         setEditDescription(task.description || '');
         setEditPriority(task.priority || 'low');
         setEditProjectId(task.project_id || '');
+        setEditDueDate(task.due_date || new Date().toISOString().split('T')[0]);
     };
 
     const cancelEditing = () => {
@@ -226,6 +228,7 @@ export default function TodoList({ user, onTaskUpdated }) {
         setEditDescription('');
         setEditPriority('low');
         setEditProjectId('');
+        setEditDueDate('');
     };
 
     const saveEditedTask = async (id) => {
@@ -234,7 +237,8 @@ export default function TodoList({ user, onTaskUpdated }) {
             .update({
                 description: editDescription,
                 priority: editPriority,
-                project_id: editProjectId || null
+                project_id: editProjectId || null,
+                due_date: editDueDate
             })
             .eq('id', id);
 
@@ -244,15 +248,18 @@ export default function TodoList({ user, onTaskUpdated }) {
             return;
         }
 
-        setTasks(tasks.map(t =>
+        const updatedTasks = tasks.map(t =>
             t.id === id ? {
                 ...t,
                 description: editDescription,
                 priority: editPriority,
-                project_id: editProjectId || null
+                project_id: editProjectId || null,
+                due_date: editDueDate
             } : t
-        ));
+        );
 
+        // Сортируем задачи снова, если дата изменилась
+        setTasks(updatedTasks.sort((a, b) => new Date(a.due_date) - new Date(b.due_date)));
         setEditingTaskId(null);
         if (onTaskUpdated) onTaskUpdated('Task updated!');
     };
@@ -536,8 +543,16 @@ export default function TodoList({ user, onTaskUpdated }) {
                                                     autoFocus
                                                 />
 
-                                                {/* Новые контролы: Проект и Приоритет */}
+                                                {/* Новые контролы: Дата, Проект и Приоритет */}
                                                 <div className="flex flex-wrap items-center gap-4 mt-2 mb-3">
+                                                    <input
+                                                        type="date"
+                                                        value={editDueDate}
+                                                        min={new Date().toISOString().split('T')[0]}
+                                                        onChange={(e) => setEditDueDate(e.target.value)}
+                                                        className="bg-bgMain text-gray-300 text-xs px-2 py-1.5 rounded border border-acc2 focus:outline-none focus:border-acc1 cursor-pointer"
+                                                    />
+
                                                     <select
                                                         value={editProjectId}
                                                         onChange={(e) => setEditProjectId(e.target.value)}
@@ -603,7 +618,7 @@ export default function TodoList({ user, onTaskUpdated }) {
                                             </div>
                                         )}
 
-                                        {task.due_date && (
+                                        {task.due_date && editingTaskId !== task.id && (
                                             <div className="flex items-center gap-2 mt-3">
                                                 <span className={`text-xs font-mono w-fit px-2 py-0.5 rounded border ${
                                                     isOverdue
