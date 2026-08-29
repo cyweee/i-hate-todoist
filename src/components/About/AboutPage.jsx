@@ -21,7 +21,7 @@ export default function AboutPage({ onBack }) {
                     <h1 className="text-3xl md:text-4xl font-bold text-white mb-2 tracking-tight">
                         <span className="text-acc1">~/</span>Project_Documentation
                     </h1>
-                    <p className="text-gray-500 text-sm">v1.0.0 | Gamifikovaný systém pro správu úkolů</p>
+                    <p className="text-gray-500 text-sm">v1.0.0 | Systém pro správu úkolů</p>
                 </div>
 
                 <div className="space-y-10 text-sm md:text-base">
@@ -32,8 +32,8 @@ export default function AboutPage({ onBack }) {
                             <span className="text-gray-500">01.</span> Přehled projektu
                         </h2>
                         <p className="mb-4">
-                            Tento projekt je moderní, gamifikovaná webová aplikace pro správu úkolů, navržená ke zvýšení produktivity pomocí okamžité vizuální zpětné vazby.
-                            Uživatelé mohou spravovat úkoly, třídit je do projektů a budovat svou aktivitu ve stylu „commit-history“ (podobně jako na GitHubu).
+                            Tento web je vytvořený k tomu, aby ti pomohl nakopnout produktivitu díky okamžité vizuální zpětné vazbě.
+                            Uživatelé si tu můžou spravovat úkoly, seskupovat je do projektů a sledovat svoji aktivitu ve stylu „historie commitů“ (podobně jako to má GitHub).
                         </p>
                     </section>
 
@@ -62,7 +62,7 @@ export default function AboutPage({ onBack }) {
                         </ul>
                     </section>
 
-                    {/* Sekce 3: Technologie */}
+                    {/* Sekce 3: Technologie (Убрано лишнее) */}
                     <section>
                         <h2 className="text-xl font-bold text-[#d18b47] mb-4 flex items-center gap-2">
                             <span className="text-gray-500">03.</span> Použité technologie a architektura
@@ -72,12 +72,7 @@ export default function AboutPage({ onBack }) {
                                 <span className="text-acc1">Frontend:</span> React.js (Hooks, Context, Optimistic State)<br/>
                                 <span className="text-acc1">Styling:</span> Tailwind CSS (Custom Design System)<br/>
                                 <span className="text-acc1">Backend:</span> Supabase (PostgreSQL, Row Level Security)<br/>
-                                <span className="text-acc1">Autentizace:</span> Supabase Auth<br/>
-                                <br/>
-                                <span className="text-gray-500">// Pozoruhodná technická řešení:</span><br/>
-                                - Implementace <span className="text-[#52b788]">Promise.all()</span> pro paralelní načítání dat.<br/>
-                                - Prevence „race condition“ chyb pomocí zamykacích mechanismů se strukturou <span className="text-[#52b788]">Set()</span>.<br/>
-                                - Vlastní SQL Views pro agresivní optimalizaci výkonu databáze.<br/>
+                                <span className="text-acc1">Autentizace:</span> Supabase Auth
                             </code>
                         </div>
                     </section>
